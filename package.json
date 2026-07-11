@@ -1,0 +1,29 @@
+{
+  "name": "upstart-back-office-extension",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "dev:firefox": "wxt -b firefox",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "build:release": "WXT_API_ENV=production wxt build",
+    "zip:release": "WXT_API_ENV=production wxt zip",
+    "compile": "tsc --noEmit",
+    "postinstall": "wxt prepare"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "typescript": "^5.6.3",
+    "wxt": "^0.19.13"
+  },
+  "dependencies": {
+    "@wxt-dev/module-react": "^1.2.2",
+    "lucide-react": "^1.24.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}

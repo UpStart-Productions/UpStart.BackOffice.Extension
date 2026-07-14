@@ -21,18 +21,20 @@ via `chrome.identity`).
   gets posted automatically. Also **no approval workflow**: a logged expense
   is final immediately (but deletable, from the admin app's new **Expenses**
   page).
-- **Real Cognito login (once configured).** "Sign in with UpStart Back
-  Office" would open the same Hosted UI the admin dashboard uses, via
-  `chrome.identity.launchWebAuthFlow` (Authorization Code + PKCE, no AWS
-  Amplify, no backend auth endpoint) — reusing the admin app's own App
-  Client so it's the same signed-in users. **Not usable yet** — Cognito
-  isn't provisioned for this project in local dev. See `dev-keys/README.md`
-  for what to fill in once it is.
+- **Real Cognito login.** "Sign in with UpStart Back Office" opens the same
+  Hosted UI the admin dashboard uses, via `chrome.identity.launchWebAuthFlow`
+  (Authorization Code + PKCE, no AWS Amplify, no backend auth endpoint) —
+  reusing the admin app's own App Client so it's the same signed-in users.
+  **One manual AWS step is still required** before this works: the
+  extension's OAuth redirect URI has to be registered on that Cognito App
+  Client. See `dev-keys/README.md` for the exact console steps — it's a
+  couple of clicks, not code.
 - **Dev login.** "Use local dev login instead" on the sign-in screen — sends
   the API's dev auth header (`x-user-email`) instead of a token, and only
   works when the API's `NODE_ENV !== 'production'` (see
-  `api/src/app/auth/dev-auth.guard.ts` in the main repo). This is the
-  practical way to test locally today, since Cognito isn't set up yet.
+  `api/src/app/auth/dev-auth.guard.ts` in the main repo). Use this against
+  your local API; Cognito login is what you'd use once pointed at the real
+  API (see "Local build against the real (prod) API" below).
 
 ## What's deliberately left out (for now)
 
@@ -85,6 +87,30 @@ This produces `.output/chrome-mv3/`. In Chrome:
 4. Select `.output/chrome-mv3`
 
 For live-reload while making changes, use `npm run dev` instead.
+
+## Local build against the real (prod) API
+
+This extension is not intended to be published to the Chrome Web Store —
+it's meant to stay a locally-loaded ("unpacked") extension even when pointed
+at the real API. That's why `manifest.key` in `wxt.config.ts` is pinned for
+every build, not just dev ones: the extension ID (and therefore the Cognito
+OAuth redirect URI) stays the same `lmdcjchnheomncngpjhcacnnkpaekmeg`
+whether you're pointed at `localhost:3001` or `api.heyupstart.com`.
+
+To build against production instead of localhost:
+
+```sh
+npm run build:release   # or npm run zip:release
+```
+
+This sets `WXT_API_ENV=production`, which switches `lib/config.ts`'s
+`API_BASE`/`ADMIN_BASE_URL` and `wxt.config.ts`'s `host_permissions` to the
+real domains. Load `.output/chrome-mv3` the same way (`chrome://extensions`
+-> Load unpacked). Dev login won't work against this build (the real API
+rejects `x-user-email` headers once `NODE_ENV=production` — see
+`DevAuthGuard`), so **Sign in with UpStart Back Office** (Cognito) is the
+only way in — which means the AWS callback-URL registration in
+`dev-keys/README.md` has to be done first.
 
 ## Trying it out
 

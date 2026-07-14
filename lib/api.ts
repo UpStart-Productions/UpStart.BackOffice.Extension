@@ -151,6 +151,18 @@ export interface Expense {
   receiptUrl?: string | null;
 }
 
+// Prisma's Decimal type (used for Expense.amount) serializes to a JSON
+// *string* (it has a toJSON() that calls toString()), not a number --
+// res.json() hands that back as-is. Coercing here, once, at the API
+// boundary is what keeps every caller free to treat `amount` as a real
+// number (e.g. `.toFixed(2)`) without re-checking -- skipping this is what
+// crashed the whole panel earlier: `.toFixed` doesn't exist on a string,
+// and an uncaught render error unmounts the entire React tree (no error
+// boundary here), which is why the panel appeared to "completely clear."
+function normalizeExpense(raw: Expense): Expense {
+  return { ...raw, amount: Number(raw.amount) };
+}
+
 export async function createExpense(input: CreateExpenseInput): Promise<Expense> {
   const res = await fetch(`${API_BASE}/expenses`, {
     method: 'POST',
@@ -158,7 +170,7 @@ export async function createExpense(input: CreateExpenseInput): Promise<Expense>
     body: JSON.stringify(input),
   });
   await throwIfNotOk(res);
-  return res.json();
+  return normalizeExpense(await res.json());
 }
 
 export async function uploadExpenseReceipt(expenseId: string, file: File): Promise<Expense> {
@@ -172,5 +184,5 @@ export async function uploadExpenseReceipt(expenseId: string, file: File): Promi
     body: form,
   });
   await throwIfNotOk(res);
-  return res.json();
+  return normalizeExpense(await res.json());
 }

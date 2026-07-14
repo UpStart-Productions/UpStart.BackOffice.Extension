@@ -126,16 +126,10 @@ body {
 }
 
 .login-mark {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
-  background: var(--ubo-purple);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 18px;
-  font-weight: 800;
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  object-fit: contain;
   margin-bottom: 12px;
 }
 

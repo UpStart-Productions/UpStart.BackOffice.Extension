@@ -115,7 +115,7 @@ function LoginScreen({
   return (
     <div className="panel">
       <div className="login-wrap">
-        <div className="login-mark">UBO</div>
+        <img className="login-mark" src={chrome.runtime.getURL('icon/128.png')} alt="UpStart Back Office" />
         <p className="login-title">Sign in to UpStart Back Office</p>
         <p className="login-sub">Use the same account you sign in to the admin dashboard with.</p>
         <div className="login-form">

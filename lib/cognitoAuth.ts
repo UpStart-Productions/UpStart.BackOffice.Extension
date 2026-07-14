@@ -6,21 +6,29 @@
 // client ID (see admin/src/app/core/cognito-auth.service.ts in the main
 // repo).
 //
-// NOT CONFIGURED YET: UpStart Back Office doesn't have Cognito set up in
-// local dev (COGNITO_USER_POOL_ID/COGNITO_CLIENT_ID are empty in .env --
-// see the main repo's README, "Dev authentication"). COGNITO_DOMAIN and
-// CLIENT_ID below are placeholders matching the heyupstart.com naming
-// pattern (auth.heyupstart.com, mirroring office.heyupstart.com /
-// api.heyupstart.com) -- fill in the real values once Cognito is
-// provisioned, and use dev login (lib/devAuth.ts) until then.
+// COGNITO_DOMAIN/CLIENT_ID below come from the fallback values baked into
+// the main repo's scripts/set-amplify-env.js (used whenever the Amplify
+// Console env vars aren't overridden) -- COGNITO_USER_POOL_ID
+// us-west-2_IlJRXdK5X, COGNITO_CLIENT_ID 5oi5vfbt574mqect5psnqkqabn,
+// COGNITO_DOMAIN_PREFIX us-west-2iljrxdk5x, no custom domain. If Amplify
+// Console actually has AMPLIFY_COGNITO_CUSTOM_DOMAIN set to something else
+// (e.g. auth.heyupstart.com) for the live admin app, update COGNITO_DOMAIN
+// here (and the matching host_permissions entries in wxt.config.ts) to
+// match -- this file has no way to detect that on its own.
 //
-// One AWS-side registration is needed once this is real: the redirect URI
-// below (https://<extension-id>.chromiumapp.org/, stable because the
-// extension ID is pinned -- see dev-keys/README.md) has to be added to the
-// Cognito App Client's allowed callback URLs and allowed sign-out URLs.
+// One AWS-side registration is still needed before this will work: the
+// redirect URI below (https://<extension-id>.chromiumapp.org/, stable
+// because the extension ID is pinned in wxt.config.ts -- see
+// dev-keys/README.md) has to be added to this Cognito App Client's allowed
+// callback URLs *and* allowed sign-out URLs (AWS Console -> Cognito -> User
+// pools -> us-west-2_IlJRXdK5X -> App integration -> App clients ->
+// 5oi5vfbt574mqect5psnqkqabn -> Hosted UI). Until that's done, Cognito will
+// reject the redirect (or the popup will fail to load) even with the right
+// domain/client ID above -- use dev login (lib/devAuth.ts) until it's
+// registered.
 
-const COGNITO_DOMAIN = 'auth.heyupstart.com';
-const CLIENT_ID = 'REPLACE_WITH_ADMIN_APP_COGNITO_CLIENT_ID';
+const COGNITO_DOMAIN = 'us-west-2iljrxdk5x.auth.us-west-2.amazoncognito.com';
+const CLIENT_ID = '5oi5vfbt574mqect5psnqkqabn';
 const SCOPES = 'openid profile email';
 const TOKENS_KEY = 'ubo_cognito_tokens';
 

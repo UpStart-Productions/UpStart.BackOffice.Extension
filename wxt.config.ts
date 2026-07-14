@@ -22,30 +22,19 @@ export default defineConfig({
     // isn't going to the Chrome Web Store (a "release" build here just means
     // "pointed at the real API/Cognito instead of localhost", not "about to
     // publish"), there's no reason to ever drop the pinned key: doing so
-    // would assign a new random ID and silently break the registered
-    // Cognito callback URL. See dev-keys/README.md. If this project ever
-    // does get published to the Web Store, remove `key` for that build only
-    // (the Store assigns its own ID on first upload and rejects a manifest
-    // that already has one).
+    // would assign a new random ID on every reload. See dev-keys/README.md.
     key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyejP+Bgt8rFAYwMC+L3Qx9cMhQf96fBMDxDQMTGd54RBK5KHiIC22/H6nzAuzPQkvwXnlO8/uMckYzMkwj3Z0/wHmYXA0WbXyLODr3g2dDJj6BUqdoNw+JCkNc91DZ1Im/0fFIIcwXO3j0vweQZh1PHyF7LGV5FqpQ1lpIN7m7jJ0Y2uYKFWt6vRkENURghlYPpDrOXWlUV9j78Ye8Ej3DTlnSlSCNsRizzsNlHbxGHSFgJ9Ry1eQy9Men3xVMGit1tTSZ+QSApsp1Rz+c9ybBlstE2vUMx8LizkgQN2jAKU4z1NsmkAfgIzPs24qGZ142jtyrdHbWhdRnRWiegN/wIDAQAB',
-    // 'identity' unlocks chrome.identity.launchWebAuthFlow() for the Cognito
-    // Hosted UI login (see lib/cognitoAuth.ts).
-    permissions: ['storage', 'sidePanel', 'identity'],
+    permissions: ['storage', 'sidePanel'],
     // Dev builds (npm run dev/build) talk to the local API; release builds
     // (npm run build:release, WXT_API_ENV=production) talk to the real
     // UpStart Back Office API -- this is independent of whether the build
     // gets published anywhere (see the `key` comment above). host_permissions
     // is what lets fetch() calls from the side panel reach these origins
-    // regardless of CORS response headers. The Cognito domain is Cognito's
-    // own default hosted-UI domain for this user pool's region + pool ID
-    // (us-west-2_IlJRXdK5X), derived from the fallback values in the main
-    // repo's scripts/set-amplify-env.js -- update both this and
-    // lib/cognitoAuth.ts's COGNITO_DOMAIN if Amplify Console actually has
-    // AMPLIFY_COGNITO_CUSTOM_DOMAIN set to something else (e.g.
-    // auth.heyupstart.com) for the live admin app.
+    // regardless of CORS response headers. Cognito password sign-in talks to
+    // the regional Cognito IdP API (same as the admin app's aws-amplify auth).
     host_permissions: isReleaseBuild
-      ? ['https://api.heyupstart.com/*', 'https://us-west-2iljrxdk5x.auth.us-west-2.amazoncognito.com/*']
-      : ['http://localhost:3001/*', 'https://us-west-2iljrxdk5x.auth.us-west-2.amazoncognito.com/*'],
+      ? ['https://api.heyupstart.com/*', 'https://cognito-idp.us-west-2.amazonaws.com/*']
+      : ['http://localhost:3001/*', 'https://cognito-idp.us-west-2.amazonaws.com/*'],
     icons: {
       16: 'icon/16.png',
       32: 'icon/32.png',

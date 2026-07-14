@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "wxt",
     "dev:firefox": "wxt -b firefox",
-    "build": "wxt build",
-    "zip": "wxt zip",
-    "build:release": "WXT_API_ENV=production wxt build",
-    "zip:release": "WXT_API_ENV=production wxt zip",
+    "build": "WXT_API_ENV=production wxt build",
+    "build:local": "wxt build",
+    "zip": "WXT_API_ENV=production wxt zip",
+    "zip:local": "wxt zip",
+    "build:release": "npm run build",
+    "zip:release": "npm run zip",
     "compile": "tsc --noEmit",
     "postinstall": "wxt prepare"
   },
@@ -22,6 +24,7 @@
   },
   "dependencies": {
     "@wxt-dev/module-react": "^1.2.2",
+    "aws-amplify": "^6.18.0",
     "lucide-react": "^1.24.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

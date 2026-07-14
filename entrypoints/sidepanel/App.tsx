@@ -2,20 +2,23 @@ import { useEffect, useState } from 'react';
 import { LogOut } from 'lucide-react';
 import { DEV_LOGIN_AVAILABLE } from '../../lib/config';
 import { DEFAULT_EMAIL, DevCreds, clearDevCreds, getDevCreds, setDevCreds } from '../../lib/devAuth';
-import { getCognitoTokens, signInWithCognito, signOutCognito } from '../../lib/cognitoAuth';
+import {
+  confirmSignInWithNewPassword,
+  getAuthErrorMessage,
+  hasCognitoSession,
+  signInWithPassword,
+  signOutCognito,
+} from '../../lib/cognitoAuth';
 import {
   Expense,
   Me,
   ProjectOption,
-  TimeEntry,
   createExpense,
   fetchMe,
   fetchProjects,
-  fetchRunningTimeEntry,
-  startTimer,
-  stopTimer,
   uploadExpenseReceipt,
 } from '../../lib/api';
+import TimerTab from './TimerTab';
 
 type Screen = 'loading' | 'login' | 'main';
 
@@ -27,8 +30,7 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const cognitoTokens = await getCognitoTokens();
-      if (cognitoTokens) {
+      if (await hasCognitoSession()) {
         await loadMe('cognito');
         return;
       }
@@ -86,6 +88,8 @@ export default function App() {
   return <MainPanel me={me} authMode={authMode} onSignOut={handleSignOut} />;
 }
 
+type CognitoFormMode = 'login' | 'new-password-required';
+
 function LoginScreen({
   initialError,
   onDevSignedIn,
@@ -96,17 +100,62 @@ function LoginScreen({
   onCognitoSignedIn: () => void;
 }) {
   const [showDevLogin, setShowDevLogin] = useState(false);
+  const [cognitoMode, setCognitoMode] = useState<CognitoFormMode>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState('');
   const [cognitoBusy, setCognitoBusy] = useState(false);
   const [cognitoError, setCognitoError] = useState(initialError ?? '');
 
-  async function handleCognitoSignIn() {
-    setCognitoBusy(true);
+  async function handleEmailPasswordSignIn() {
     setCognitoError('');
+    if (!email.trim()) {
+      setCognitoError('Email is required.');
+      return;
+    }
+    if (!password) {
+      setCognitoError('Password is required.');
+      return;
+    }
+
+    setCognitoBusy(true);
     try {
-      await signInWithCognito();
+      const { needsNewPassword } = await signInWithPassword(email, password);
+      if (needsNewPassword) {
+        setCognitoMode('new-password-required');
+        setNewPassword('');
+        setNewPasswordConfirm('');
+        setPassword('');
+      } else {
+        onCognitoSignedIn();
+      }
+    } catch (err) {
+      setCognitoError(getAuthErrorMessage(err));
+    } finally {
+      setCognitoBusy(false);
+    }
+  }
+
+  async function handleNewPassword() {
+    setCognitoError('');
+    const p = newPassword.trim();
+    const c = newPasswordConfirm.trim();
+    if (p.length < 8) {
+      setCognitoError('Password must be at least 8 characters.');
+      return;
+    }
+    if (p !== c) {
+      setCognitoError('Passwords do not match.');
+      return;
+    }
+
+    setCognitoBusy(true);
+    try {
+      await confirmSignInWithNewPassword(p);
       onCognitoSignedIn();
     } catch (err) {
-      setCognitoError(err instanceof Error ? err.message : String(err));
+      setCognitoError(getAuthErrorMessage(err));
     } finally {
       setCognitoBusy(false);
     }
@@ -117,13 +166,90 @@ function LoginScreen({
       <div className="login-wrap">
         <img className="login-mark" src={chrome.runtime.getURL('icon/128.png')} alt="UpStart Back Office" />
         <p className="login-title">Sign in to UpStart Back Office</p>
-        <p className="login-sub">Use the same account you sign in to the admin dashboard with.</p>
+        <p className="login-sub">Use the same email and password as the admin dashboard.</p>
         <div className="login-form">
-          <button className="btn-primary" onClick={handleCognitoSignIn} disabled={cognitoBusy}>
-            {cognitoBusy ? 'Signing in…' : 'Sign in with UpStart Back Office'}
-          </button>
+          {cognitoMode === 'login' ? (
+            <>
+              <div className="field-group">
+                <label className="field-label">Email</label>
+                <input
+                  className="field-input"
+                  type="email"
+                  autoComplete="username"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                />
+              </div>
+              <div className="field-group">
+                <label className="field-label">Password</label>
+                <input
+                  className="field-input"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                />
+              </div>
+              <button
+                className="btn-primary"
+                onClick={handleEmailPasswordSignIn}
+                disabled={cognitoBusy || !email.trim() || !password}
+              >
+                {cognitoBusy ? 'Signing in…' : 'Sign in'}
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="login-sub" style={{ textAlign: 'left', marginBottom: 12 }}>
+                Your account uses a temporary password. Set a new password to continue.
+              </p>
+              <div className="field-group">
+                <label className="field-label">New password</label>
+                <input
+                  className="field-input"
+                  type="password"
+                  autoComplete="new-password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="At least 8 characters"
+                />
+              </div>
+              <div className="field-group">
+                <label className="field-label">Confirm new password</label>
+                <input
+                  className="field-input"
+                  type="password"
+                  autoComplete="new-password"
+                  value={newPasswordConfirm}
+                  onChange={(e) => setNewPasswordConfirm(e.target.value)}
+                  placeholder="••••••••"
+                />
+              </div>
+              <button
+                className="btn-primary"
+                onClick={handleNewPassword}
+                disabled={cognitoBusy || !newPassword || !newPasswordConfirm}
+              >
+                {cognitoBusy ? 'Saving…' : 'Set password and sign in'}
+              </button>
+              <button
+                className="link-button"
+                style={{ marginTop: 12, display: 'block' }}
+                onClick={() => {
+                  setCognitoMode('login');
+                  setCognitoError('');
+                  setNewPassword('');
+                  setNewPasswordConfirm('');
+                }}
+              >
+                Back to sign in
+              </button>
+            </>
+          )}
           {cognitoError && <div className="login-error">{cognitoError}</div>}
-          {DEV_LOGIN_AVAILABLE && (
+          {DEV_LOGIN_AVAILABLE && cognitoMode === 'login' && (
             <>
               <button
                 className="link-button"
@@ -224,164 +350,6 @@ function MainPanel({
         </button>
       </div>
       {tab === 'timer' ? <TimerTab me={me} /> : <ExpenseTab me={me} />}
-    </div>
-  );
-}
-
-function formatElapsed(ms: number): string {
-  const totalSec = Math.max(0, Math.floor(ms / 1000));
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
-}
-
-function TimerTab({ me }: { me: Me }) {
-  const [projects, setProjects] = useState<ProjectOption[] | null>(null);
-  const [running, setRunning] = useState<TimeEntry | null | undefined>(undefined);
-  const [projectId, setProjectId] = useState('');
-  const [taskId, setTaskId] = useState('');
-  const [description, setDescription] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [tick, setTick] = useState(0);
-
-  async function load() {
-    setError('');
-    try {
-      const [projectList, runningEntry] = await Promise.all([fetchProjects(), fetchRunningTimeEntry(me.id)]);
-      setProjects(projectList.filter((p) => p.isActive));
-      setRunning(runningEntry);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Ticks the elapsed-time display for a running timer once a second.
-  useEffect(() => {
-    if (!running) return;
-    const interval = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(interval);
-  }, [running]);
-
-  const selectedProject = projects?.find((p) => p.id === projectId);
-  const manualTasks = (selectedProject?.tasks ?? []).filter((t) => t.isActive);
-
-  async function handleStart() {
-    if (!projectId) {
-      setError('Choose a project.');
-      return;
-    }
-    setBusy(true);
-    setError('');
-    try {
-      const entry = await startTimer({
-        projectId,
-        projectTaskId: taskId || undefined,
-        description: description.trim() || undefined,
-      });
-      setRunning(entry);
-      setDescription('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleStop() {
-    if (!running) return;
-    setBusy(true);
-    setError('');
-    try {
-      await stopTimer(running.id);
-      setRunning(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (projects === null || running === undefined) {
-    return <div className="panel-body">Loading…</div>;
-  }
-
-  if (running) {
-    const elapsedMs = tick >= 0 ? Date.now() - new Date(running.startedAt).getTime() : 0;
-    return (
-      <div className="panel-body">
-        <div className="timer-card">
-          <p className="timer-project">{running.project.name}</p>
-          <p className="timer-client">{running.project.client.name}</p>
-          <div className="timer-elapsed">{formatElapsed(elapsedMs)}</div>
-          {running.description && <p className="timer-description">{running.description}</p>}
-          <button className="btn-danger" onClick={handleStop} disabled={busy}>
-            {busy ? 'Stopping…' : 'Stop timer'}
-          </button>
-        </div>
-        {error && <div className="form-error">{error}</div>}
-      </div>
-    );
-  }
-
-  return (
-    <div className="panel-body">
-      <div className="field-group">
-        <label className="field-label">Project</label>
-        <select
-          className="field-select"
-          value={projectId}
-          onChange={(e) => {
-            setProjectId(e.target.value);
-            setTaskId('');
-          }}
-        >
-          <option value="">Select a project</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name} ({p.client.name})
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {manualTasks.length > 0 && (
-        <div className="field-group">
-          <label className="field-label">Task</label>
-          <select className="field-select" value={taskId} onChange={(e) => setTaskId(e.target.value)}>
-            <option value="">Select a task</option>
-            {manualTasks.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      <div className="field-group">
-        <label className="field-label">Notes (optional)</label>
-        <textarea
-          className="field-textarea"
-          rows={2}
-          placeholder="What are you working on?"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
-      </div>
-
-      {error && <div className="form-error">{error}</div>}
-
-      <button className="btn-primary" onClick={handleStart} disabled={busy || !projectId}>
-        {busy ? 'Starting…' : 'Start timer'}
-      </button>
     </div>
   );
 }

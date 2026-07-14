@@ -362,6 +362,64 @@ body {
   margin-bottom: 4px;
 }
 
+.timer-section {
+  margin-top: 20px;
+}
+
+.timer-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 0 0 10px;
+}
+
+.timer-card-list {
+  text-align: left;
+  margin-bottom: 10px;
+}
+
+.timer-card-list .timer-elapsed {
+  font-size: 22px;
+  margin-bottom: 8px;
+}
+
+.timer-elapsed-stopped {
+  color: var(--text-primary);
+}
+
+.timer-stopped-at {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin: 0 0 8px;
+}
+
+.timer-card-highlight {
+  border-color: var(--ubo-purple);
+  box-shadow: 0 0 0 1px var(--ubo-purple-bg);
+}
+
+.timer-card-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.timer-card-actions .btn-secondary {
+  margin-top: 0;
+}
+
+.form-success {
+  font-size: 11px;
+  color: var(--success);
+  background: var(--success-bg);
+  border-radius: 7px;
+  padding: 9px 10px;
+  margin-top: 10px;
+  line-height: 1.5;
+}
+
 .success-wrap {
   padding: 30px 20px;
   display: flex;

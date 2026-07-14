@@ -2,8 +2,8 @@
 
 A side-panel extension for [UpStart Back Office](https://office.heyupstart.com):
 start/stop your timer and log an expense without switching to the app. Scaffolded
-the same way as GrovLink Web Clipper (WXT + React, MV3, Cognito Hosted UI login
-via `chrome.identity`).
+the same way as GrovLink Web Clipper (WXT + React, MV3, Cognito email/password
+login via aws-amplify).
 
 ## What's in this stub
 
@@ -21,14 +21,10 @@ via `chrome.identity`).
   gets posted automatically. Also **no approval workflow**: a logged expense
   is final immediately (but deletable, from the admin app's new **Expenses**
   page).
-- **Real Cognito login.** "Sign in with UpStart Back Office" opens the same
-  Hosted UI the admin dashboard uses, via `chrome.identity.launchWebAuthFlow`
-  (Authorization Code + PKCE, no AWS Amplify, no backend auth endpoint) —
-  reusing the admin app's own App Client so it's the same signed-in users.
-  **One manual AWS step is still required** before this works: the
-  extension's OAuth redirect URI has to be registered on that Cognito App
-  Client. See `dev-keys/README.md` for the exact console steps — it's a
-  couple of clicks, not code.
+- **Real Cognito login.** Email and password on the sign-in screen — same
+  flow as the admin dashboard (`aws-amplify` USER_SRP_AUTH against the same
+  user pool and app client). No Hosted UI popup, no AWS callback URL
+  registration needed.
 - **Dev login.** "Use local dev login instead" on the sign-in screen — sends
   the API's dev auth header (`x-user-email`) instead of a token, and only
   works when the API's `NODE_ENV !== 'production'` (see
@@ -79,52 +75,61 @@ npm install
 npm run build
 ```
 
-This produces `.output/chrome-mv3/`. In Chrome:
+This produces `.output/chrome-mv3/` pointed at **production**
+(`api.heyupstart.com`). In Chrome:
 
 1. Go to `chrome://extensions`
 2. Enable **Developer mode** (top right)
 3. Click **Load unpacked**
 4. Select `.output/chrome-mv3`
 
-For live-reload while making changes, use `npm run dev` instead.
+For live-reload while making changes against your **local** API, use
+`npm run dev` instead (requires the local Back Office stack running).
 
-## Local build against the real (prod) API
-
-This extension is not intended to be published to the Chrome Web Store —
-it's meant to stay a locally-loaded ("unpacked") extension even when pointed
-at the real API. That's why `manifest.key` in `wxt.config.ts` is pinned for
-every build, not just dev ones: the extension ID (and therefore the Cognito
-OAuth redirect URI) stays the same `lmdcjchnheomncngpjhcacnnkpaekmeg`
-whether you're pointed at `localhost:3001` or `api.heyupstart.com`.
-
-To build against production instead of localhost:
+To build explicitly for localhost instead of prod:
 
 ```sh
-npm run build:release   # or npm run zip:release
+npm run build:local
 ```
 
-This sets `WXT_API_ENV=production`, which switches `lib/config.ts`'s
-`API_BASE`/`ADMIN_BASE_URL` and `wxt.config.ts`'s `host_permissions` to the
-real domains. Load `.output/chrome-mv3` the same way (`chrome://extensions`
--> Load unpacked). Dev login won't work against this build (the real API
-rejects `x-user-email` headers once `NODE_ENV=production` — see
-`DevAuthGuard`), so **Sign in with UpStart Back Office** (Cognito) is the
-only way in — which means the AWS callback-URL registration in
-`dev-keys/README.md` has to be done first.
+## Local API development
+
+If you're actively changing the Back Office API locally:
+
+1. `UpStart.BackOffice` running locally (`npm run dev` in that repo).
+2. `npm run build:local` or `npm run dev` in this repo.
+3. Sign in with email/password (same Cognito pool) or **Use local dev login**
+   with `admin@upstart.test`.
+
+## Build output
+
+`npm run build` (default) talks to production. `npm run build:local` talks to
+`http://localhost:3001/api`. The extension name in Chrome shows **(dev)** for
+local builds so you can tell which is loaded.
 
 ## Trying it out
 
+**Local API** (`npm run build:local` or `npm run dev`):
+
 1. Click the toolbar icon — the side panel opens on the sign-in screen.
-2. Click **Use local dev login instead**, leave the default email
+2. Either sign in with email/password (same Cognito pool as local admin), or click
+   **Use local dev login instead**, leave the default email
    (`admin@upstart.test`), and continue.
+
+**Production API** (`npm run build` — the default):
+
+1. Reload the extension in `chrome://extensions` after building.
+2. Sign in with the same email and password you use at
+   `https://office.heyupstart.com`.
+
+Then:
+
 3. **Timer tab:** pick a project (and task, if the project has manual
    tasks), optionally add notes, click **Start timer**. The panel shows a
-   live elapsed clock; click **Stop timer** when done. Check
-   `http://localhost:4201/time-entry` to see it land there.
+   live elapsed clock; click **Stop timer** when done.
 4. **Expense tab:** fill in a description and amount (required), optionally
    a category, project, reimbursable/billable flags, payment method, notes,
-   and a receipt photo, then **Log expense**. Check
-   `http://localhost:4201/expenses` to see it show up.
+   and a receipt photo, then **Log expense**.
 
 ## Project layout
 
@@ -137,9 +142,7 @@ entrypoints/
 lib/
   api.ts               fetch wrapper for the local API (me, projects,
                        time-entries start/stop, expenses create/receipt)
-  cognitoAuth.ts        Cognito Hosted UI login scaffolding (launchWebAuthFlow +
-                       PKCE) -- not usable until Cognito is configured for this
-                       project; see dev-keys/README.md
+  cognitoAuth.ts        Cognito email/password login (aws-amplify, same as admin app)
   devAuth.ts            chrome.storage-backed dev credentials (just an email --
                        UpStart Back Office is single-tenant, unlike GrovLink)
   config.ts             API_BASE / ADMIN_BASE_URL, keyed by WXT_API_ENV

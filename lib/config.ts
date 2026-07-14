@@ -2,9 +2,9 @@
 // `wxt build` (the same command used for everyday local "Load unpacked"
 // testing) always runs in Vite's "production" mode, which has nothing to do
 // with whether this build should talk to the real UpStart Back Office API.
-// Instead this is driven by an explicit WXT_API_ENV env var, only set by the
-// dedicated `npm run build:release` / `npm run zip:release` scripts. Plain
-// `npm run build`/`npm run dev` are unaffected and keep hitting localhost.
+// Driven by WXT_API_ENV: `npm run build` sets production (real API);
+// `npm run build:local` omits it (localhost). Plain `npm run dev` also
+// targets localhost.
 const isReleaseBuild = import.meta.env.WXT_API_ENV === 'production';
 
 // Port 3001 matches the main repo's local dev setup (see UpStart.BackOffice's

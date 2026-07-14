@@ -90,39 +90,19 @@ export interface TimeEntry {
   projectTask?: { id: string; name: string } | null;
 }
 
-// There's no dedicated "running timer" endpoint -- at most one time entry per
-// user can be running at once (enforced server-side, see
-// TimeEntriesController#assertNoRunningTimer), and a running one is always
-// the most recent. A generous `from` window (well beyond any realistic timer
-// length) keeps this to one cheap query instead of pulling a user's entire
-// time-entry history just to check for a stoppedAt: null row.
-export async function fetchRunningTimeEntry(userId: string): Promise<TimeEntry | null> {
-  const from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const params = new URLSearchParams({ userId, from });
-  const res = await fetch(`${API_BASE}/time-entries?${params}`, { headers: await authHeaders() });
-  await throwIfNotOk(res);
-  const entries: TimeEntry[] = await res.json();
-  return entries.find((e) => !e.stoppedAt) ?? null;
-}
-
-export async function startTimer(input: {
+// Creates a completed entry in one shot — used when saving local timer drafts.
+// Passing stoppedAt skips the server-side "one running timer" guard.
+export async function createCompletedTimeEntry(input: {
   projectId: string;
-  projectTaskId?: string;
+  projectTaskId: string;
   description?: string;
+  startedAt: string;
+  stoppedAt: string;
 }): Promise<TimeEntry> {
   const res = await fetch(`${API_BASE}/time-entries`, {
     method: 'POST',
     headers: await authHeaders(),
-    body: JSON.stringify({ ...input, startedAt: new Date().toISOString() }),
-  });
-  await throwIfNotOk(res);
-  return res.json();
-}
-
-export async function stopTimer(id: string): Promise<TimeEntry> {
-  const res = await fetch(`${API_BASE}/time-entries/${id}/stop`, {
-    method: 'POST',
-    headers: await authHeaders(),
+    body: JSON.stringify(input),
   });
   await throwIfNotOk(res);
   return res.json();

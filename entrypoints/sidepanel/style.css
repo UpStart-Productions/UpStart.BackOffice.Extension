@@ -453,3 +453,62 @@ body {
   color: var(--text-muted);
   margin: 0 0 20px;
 }
+
+/* Organization (tenant) switcher, shown only to people who can work in more than one. */
+.tenant-row {
+  padding: 10px 15px 0;
+}
+
+.tenant-row .field-label {
+  margin-bottom: 4px;
+}
+
+/* Mileage: amount is miles x rate, shown read-only like the admin dialog. */
+.computed-amount {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 9px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  background: #f9fafb;
+  color: var(--text-primary);
+}
+
+/* Work tasks multi-pick. */
+.check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 9px;
+  background: #fff;
+}
+
+/* Today's entries: duration and Start on one line. */
+.entry-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.entry-duration {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.btn-secondary.btn-inline {
+  width: auto;
+  margin-top: 0;
+  padding: 6px 14px;
+}
+
+.btn-secondary:disabled {
+  opacity: 0.55;
+  cursor: default;
+}

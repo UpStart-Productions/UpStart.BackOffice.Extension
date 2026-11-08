@@ -16,7 +16,7 @@ export default defineConfig({
     name: isReleaseBuild ? 'UpStart Back Office' : 'UpStart Back Office (dev)',
     description:
       'Quick time tracking and expense capture for UpStart Back Office, without switching to the app.',
-    version: '0.0.1',
+    version: '0.1.0',
     // Pins the extension to a fixed ID (lmdcjchnheomncngpjhcacnnkpaekmeg) for
     // EVERY build, dev and release alike -- not just dev/testing. Since this
     // isn't going to the Chrome Web Store (a "release" build here just means

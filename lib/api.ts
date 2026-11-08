@@ -2,6 +2,16 @@ import { API_BASE } from './config';
 import { getDevCreds } from './devAuth';
 import { getValidIdToken } from './cognitoAuth';
 
+// Tenant the panel is working in, sent as x-tenant-slug on every call -- the same header the admin
+// app sends (admin/src/app/core/auth-store.service.ts). Super users need it to reach any tenant's
+// data at all; people with user rows in several tenants use it to pick one. The API only honors a
+// tenant the person actually belongs to (resolveUserForRequest), so this is a choice, never a grant.
+let tenantSlug = '';
+
+export function setApiTenantSlug(slug: string): void {
+  tenantSlug = slug;
+}
+
 // Real Cognito login takes priority when both are present -- that shouldn't
 // normally happen (App.tsx only ever sets up one at a time), but if it did,
 // a real signed-in session is the one actually backed by a live token worth
@@ -9,13 +19,17 @@ import { getValidIdToken } from './cognitoAuth';
 // prod, x-user-email header in dev (see JwtAuthGuard / DevAuthGuard in the
 // main repo).
 async function authHeadersRaw(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {};
+  if (tenantSlug) headers['x-tenant-slug'] = tenantSlug;
   const idToken = await getValidIdToken();
   if (idToken) {
-    return { Authorization: `Bearer ${idToken}` };
+    headers['Authorization'] = `Bearer ${idToken}`;
+    return headers;
   }
   const creds = await getDevCreds();
   if (!creds) throw new Error('Not signed in yet.');
-  return { 'x-user-email': creds.email };
+  headers['x-user-email'] = creds.email;
+  return headers;
 }
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -37,6 +51,32 @@ async function throwIfNotOk(res: Response): Promise<void> {
   }
 }
 
+async function get<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { headers: await authHeaders() });
+  await throwIfNotOk(res);
+  return res.json();
+}
+
+async function post<T>(path: string, body: unknown = {}): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify(body),
+  });
+  await throwIfNotOk(res);
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Session: who am I, which tenants can I work in
+// ---------------------------------------------------------------------------------------------
+
+export type UserRole = 'ADMIN' | 'USER' | 'CLIENT';
+export type PermissionArea = 'time' | 'expenses' | 'projects' | 'clients' | 'tasks' | string;
+export type AccessLevel = 'own' | 'all';
+export type AreaAction = 'view' | 'create' | 'edit' | 'delete' | 'setup';
+
+/** GET /users/me -- see UsersController.me in the main repo. */
 export interface Me {
   id: string;
   email: string;
@@ -44,22 +84,43 @@ export interface Me {
   lastName?: string | null;
   name?: string | null;
   avatarUrl?: string | null;
-  role: 'ADMIN' | 'MEMBER';
+  role: UserRole;
   hourlyRate?: number | null;
   clientId?: string | null;
+  tenantId?: string | null;
+  isSuper?: boolean;
+  /** The tenant role's name (Member, Guest) for USER accounts; null for admins. */
+  roleName?: string | null;
+  permissions?: Partial<Record<PermissionArea, AccessLevel>>;
+  actions?: Partial<Record<PermissionArea, Partial<Record<Exclude<AreaAction, 'view'>, boolean>>>>;
+  /** Modules on for the tenant this request ran in; undefined when there was no tenant. */
+  modules?: string[];
 }
 
-export async function fetchMe(): Promise<Me> {
-  const res = await fetch(`${API_BASE}/users/me`, { headers: await authHeaders() });
-  await throwIfNotOk(res);
-  return res.json();
+export function fetchMe(): Promise<Me> {
+  return get<Me>('/users/me');
 }
+
+export interface TenantOption {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+/** Tenants this person can work in: all of them for a super user, else the ones they have a user row in. */
+export function fetchTenants(): Promise<TenantOption[]> {
+  return get<TenantOption[]>('/tenants/mine');
+}
+
+// ---------------------------------------------------------------------------------------------
+// Projects, clients, tasks
+// ---------------------------------------------------------------------------------------------
 
 export interface ProjectTaskOption {
   id: string;
   projectId: string;
   name: string;
-  source: 'MANUAL' | 'ASANA';
+  source?: 'MANUAL' | 'ASANA';
   isBillable: boolean;
   isActive: boolean;
 }
@@ -67,16 +128,64 @@ export interface ProjectTaskOption {
 export interface ProjectOption {
   id: string;
   name: string;
-  isActive: boolean;
-  isBillable: boolean;
-  client: { id: string; name: string; code: string };
-  tasks: ProjectTaskOption[];
+  isActive?: boolean;
+  isBillable?: boolean;
+  /** Personal / internal projects have no client. */
+  client: { id: string; name: string } | null;
+  /** When true, Task Manager work tasks can be tagged on time entries. */
+  inTaskManager?: boolean;
+  asanaSectionGid?: string | null;
+  defaultExpenseReimbursable?: boolean;
+  defaultExpenseBillable?: boolean;
+  tasks?: ProjectTaskOption[];
 }
 
-export async function fetchProjects(): Promise<ProjectOption[]> {
-  const res = await fetch(`${API_BASE}/projects`, { headers: await authHeaders() });
-  await throwIfNotOk(res);
-  return res.json();
+export function fetchProjects(): Promise<ProjectOption[]> {
+  return get<ProjectOption[]>('/projects');
+}
+
+/** "Name (Client)" as the admin app shows a project; projects without a client show as Personal. */
+export function projectLabel(p: { name: string; client?: { name: string } | null }): string {
+  return `${p.name} (${p.client?.name ?? 'Personal'})`;
+}
+
+export interface ClientOption {
+  id: string;
+  name: string;
+}
+
+/** Clients the user can reach, for the time and expense pickers (same endpoint the admin timesheet uses). */
+export function fetchClientLookup(): Promise<ClientOption[]> {
+  return get<ClientOption[]>('/clients/lookup');
+}
+
+/** Whether the tenant has Asana connected (the admin app only offers the Asana task picker when it is). */
+export async function fetchAsanaConnected(): Promise<boolean> {
+  try {
+    return (await get<{ connected: boolean }>('/asana/status')).connected;
+  } catch {
+    return false;
+  }
+}
+
+export interface WorkTaskOption {
+  id: string;
+  name: string;
+}
+
+/** Open Task Manager tasks on a project -- the "Work tasks" picker. */
+export function fetchWorkTasks(projectId: string): Promise<WorkTaskOption[]> {
+  return get<WorkTaskOption[]>(`/tm/projects/${encodeURIComponent(projectId)}/tasks?completed=incomplete`);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Time entries (server-side timer, same as the admin timesheet and dashboard)
+// ---------------------------------------------------------------------------------------------
+
+export interface TimeEntryTask {
+  id: string;
+  name: string;
+  parent?: { id: string; name: string } | null;
 }
 
 export interface TimeEntry {
@@ -86,31 +195,70 @@ export interface TimeEntry {
   stoppedAt?: string | null;
   durationMin?: number | null;
   isBillable: boolean;
-  project: { id: string; name: string; client: { id: string; name: string } };
+  project: { id: string; name: string; client?: { id: string; name: string } | null } | null;
+  client?: { id: string; name: string } | null;
   projectTask?: { id: string; name: string } | null;
+  tasks?: TimeEntryTask[];
+  task?: TimeEntryTask | null;
 }
 
-// Creates a completed entry in one shot — used when saving local timer drafts.
-// Passing stoppedAt skips the server-side "one running timer" guard.
-export async function createCompletedTimeEntry(input: {
-  projectId: string;
-  projectTaskId: string;
+/** Your own entries, optionally in a date range (always filtered to you, even for admins). */
+export function fetchMyTimeEntries(userId: string, from?: Date, to?: Date): Promise<TimeEntry[]> {
+  const q = new URLSearchParams({ userId });
+  if (from) q.set('from', from.toISOString());
+  if (to) q.set('to', to.toISOString());
+  return get<TimeEntry[]>(`/time-entries?${q.toString()}`);
+}
+
+export interface TimeEntryInput {
+  projectId: string | null;
+  clientId: string | null;
+  projectTaskId?: string;
+  taskIds: string[] | null;
+  taskId: string | null;
   description?: string;
   startedAt: string;
-  stoppedAt: string;
-}): Promise<TimeEntry> {
-  const res = await fetch(`${API_BASE}/time-entries`, {
-    method: 'POST',
-    headers: await authHeaders(),
-    body: JSON.stringify(input),
-  });
-  await throwIfNotOk(res);
-  return res.json();
+  stoppedAt?: string;
 }
+
+/** POST /time-entries. Without stoppedAt this starts the timer (the API allows one running timer). */
+export function createTimeEntry(input: TimeEntryInput): Promise<TimeEntry> {
+  return post<TimeEntry>('/time-entries', input);
+}
+
+export function stopTimeEntry(id: string): Promise<TimeEntry> {
+  return post<TimeEntry>(`/time-entries/${encodeURIComponent(id)}/stop`);
+}
+
+/** The admin timesheet's "Start" on a stopped entry. */
+export function restartTimeEntry(id: string): Promise<TimeEntry> {
+  return post<TimeEntry>(`/time-entries/${encodeURIComponent(id)}/restart`);
+}
+
+/** Title for an entry, as the admin timesheet shows it. */
+export function entryTitle(entry: TimeEntry): string {
+  if (entry.project) return projectLabel(entry.project);
+  return entry.client?.name ?? 'No project';
+}
+
+export function workTaskLine(task: TimeEntryTask): string {
+  return task.parent?.name ? `${task.parent.name} › ${task.name}` : task.name;
+}
+
+export function entryWorkTasks(entry: TimeEntry): TimeEntryTask[] {
+  if (entry.tasks?.length) return entry.tasks;
+  return entry.task ? [entry.task] : [];
+}
+
+// ---------------------------------------------------------------------------------------------
+// Expenses
+// ---------------------------------------------------------------------------------------------
 
 export interface CreateExpenseInput {
   description: string;
-  amount: number;
+  /** Left out for mileage: the API computes it from miles x the organization's rate. */
+  amount?: number;
+  miles?: number | null;
   category?: string;
   incurredAt: string;
   projectId?: string;
@@ -128,29 +276,63 @@ export interface Expense {
   incurredAt: string;
   isReimbursable: boolean;
   isBillable: boolean;
+  miles?: number | null;
+  mileageRate?: number | null;
   receiptUrl?: string | null;
 }
 
-// Prisma's Decimal type (used for Expense.amount) serializes to a JSON
+/** A tenant's expense category or payment method, as listed in Settings → Expenses and Invoicing. */
+export interface ExpenseListOption {
+  id: string;
+  slug: string | null;
+  name: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export const MILEAGE_CATEGORY_SLUG = 'mileage';
+
+/** Same rule as the admin app's isMileageCategory (admin/src/app/pages/expenses/expense.types.ts). */
+export function isMileageCategory(category: string, categories: ExpenseListOption[]): boolean {
+  const value = category.trim();
+  if (!value) return false;
+  const mileage = categories.find((c) => c.slug === MILEAGE_CATEGORY_SLUG && c.isActive);
+  if (mileage && value.toLowerCase() === mileage.name.toLowerCase()) return true;
+  return value.toLowerCase() === 'mileage';
+}
+
+export function fetchExpenseCategories(): Promise<ExpenseListOption[]> {
+  return get<ExpenseListOption[]>('/expense-categories');
+}
+
+export function fetchExpensePaymentMethods(): Promise<ExpenseListOption[]> {
+  return get<ExpenseListOption[]>('/expense-payment-methods');
+}
+
+/** The organization's mileage rate per mile; null when none is set in Settings. */
+export async function fetchMileageRate(): Promise<number | null> {
+  const res = await get<{ rate: number | null }>('/expenses/mileage-rate');
+  return res.rate != null ? Number(res.rate) : null;
+}
+
+// Prisma's Decimal type (used for Expense.amount, miles, mileageRate) serializes to a JSON
 // *string* (it has a toJSON() that calls toString()), not a number --
 // res.json() hands that back as-is. Coercing here, once, at the API
 // boundary is what keeps every caller free to treat `amount` as a real
 // number (e.g. `.toFixed(2)`) without re-checking -- skipping this is what
 // crashed the whole panel earlier: `.toFixed` doesn't exist on a string,
-// and an uncaught render error unmounts the entire React tree (no error
-// boundary here), which is why the panel appeared to "completely clear."
+// and an uncaught render error unmounts the entire React tree.
 function normalizeExpense(raw: Expense): Expense {
-  return { ...raw, amount: Number(raw.amount) };
+  return {
+    ...raw,
+    amount: Number(raw.amount),
+    miles: raw.miles != null ? Number(raw.miles) : null,
+    mileageRate: raw.mileageRate != null ? Number(raw.mileageRate) : null,
+  };
 }
 
 export async function createExpense(input: CreateExpenseInput): Promise<Expense> {
-  const res = await fetch(`${API_BASE}/expenses`, {
-    method: 'POST',
-    headers: await authHeaders(),
-    body: JSON.stringify(input),
-  });
-  await throwIfNotOk(res);
-  return normalizeExpense(await res.json());
+  return normalizeExpense(await post<Expense>('/expenses', input));
 }
 
 export async function uploadExpenseReceipt(expenseId: string, file: File): Promise<Expense> {

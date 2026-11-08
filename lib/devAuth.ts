@@ -2,8 +2,8 @@
 // admin/src/app/core/auth-store.service.ts in the main repo): just an email
 // header, no password, checked against DevAuthGuard which is hard-disabled
 // once the API's NODE_ENV is "production". Storage-backed the same way
-// GrovLink's devAuth.ts does it, minus the customer/tenant slugs UpStart
-// Back Office doesn't have (it's single-tenant).
+// GrovLink's devAuth.ts does it. The tenant is picked after sign-in, the same
+// way as for Cognito logins (see lib/tenant.ts), and sent as x-tenant-slug.
 
 const KEY = 'ubo_dev_email';
 const DEFAULT_EMAIL = 'admin@upstart.test';

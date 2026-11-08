@@ -1,337 +1,426 @@
 import { useEffect, useState } from 'react';
-import { createCompletedTimeEntry, fetchProjects, Me, ProjectOption } from '../../lib/api';
 import {
-  addLocalRunningTimer,
+  ClientOption,
+  Me,
+  ProjectOption,
+  TimeEntry,
+  WorkTaskOption,
+  createTimeEntry,
+  entryTitle,
+  entryWorkTasks,
+  fetchAsanaConnected,
+  fetchClientLookup,
+  fetchMyTimeEntries,
+  fetchProjects,
+  fetchWorkTasks,
+  projectLabel,
+  restartTimeEntry,
+  stopTimeEntry,
+  workTaskLine,
+} from '../../lib/api';
+import {
+  LocalTimerDraft,
   draftDurationMs,
   formatDurationMs,
   getLocalTimerDrafts,
-  LocalTimerDraft,
   removeLocalTimerDraft,
   removeLocalTimerDrafts,
-  stopLocalTimer,
 } from '../../lib/localTimers';
 
-function activeTasks(project: ProjectOption | undefined) {
-  return (project?.tasks ?? []).filter((t) => t.isActive);
+// Mirrors the admin app's timer (Timesheet page + "Track time" dialog, admin/src/app/pages/time-entry/):
+// one running timer, kept on the server, so the panel, the dashboard and the timesheet all show the
+// same one. Project, client and task are optional, like in the app; work tasks come from Task Manager.
+
+function startOfToday(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
 }
 
-function formatStoppedAt(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+function endOfToday(): Date {
+  const d = new Date();
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
+/** H:MM, as the admin timesheet shows durations. */
+function formatMinutes(min: number): string {
+  const total = Math.max(0, Math.round(min));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function elapsedMs(entry: TimeEntry, now = Date.now()): number {
+  return Math.max(0, now - new Date(entry.startedAt).getTime());
 }
 
 export default function TimerTab({ me }: { me: Me }) {
-  const [projects, setProjects] = useState<ProjectOption[] | null>(null);
-  const [drafts, setDrafts] = useState<LocalTimerDraft[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [clients, setClients] = useState<ClientOption[]>([]);
+  const [asanaConnected, setAsanaConnected] = useState(false);
+  const [entries, setEntries] = useState<TimeEntry[]>([]);
+  const [running, setRunning] = useState<TimeEntry | null>(null);
+  const [legacyDrafts, setLegacyDrafts] = useState<LocalTimerDraft[]>([]);
+
   const [projectId, setProjectId] = useState('');
-  const [taskId, setTaskId] = useState('');
-  const [description, setDescription] = useState('');
+  const [clientId, setClientId] = useState('');
+  const [manualTaskId, setManualTaskId] = useState('');
+  const [asanaTaskId, setAsanaTaskId] = useState('');
+  const [workTaskOptions, setWorkTaskOptions] = useState<WorkTaskOption[]>([]);
+  const [workTaskIds, setWorkTaskIds] = useState<string[]>([]);
+  const [notes, setNotes] = useState('');
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [saveMessage, setSaveMessage] = useState('');
-  const [tick, setTick] = useState(0);
-  const [lastStoppedId, setLastStoppedId] = useState<string | null>(null);
+  const [message, setMessage] = useState('');
+  const [, setTick] = useState(0);
 
-  async function reloadDrafts() {
-    setDrafts(await getLocalTimerDrafts(me.id));
+  async function loadEntries() {
+    let today = await fetchMyTimeEntries(me.id, startOfToday(), endOfToday());
+    let active = today.find((e) => !e.stoppedAt) ?? null;
+    if (!active) {
+      // A timer left running from an earlier day still shows, as on the timesheet.
+      const all = await fetchMyTimeEntries(me.id);
+      active = all.find((e) => !e.stoppedAt) ?? null;
+    }
+    today = today.filter((e) => e.stoppedAt);
+    setEntries(today);
+    setRunning(active);
   }
 
   useEffect(() => {
     (async () => {
       setError('');
       try {
-        const projectList = await fetchProjects();
-        setProjects(projectList.filter((p) => p.isActive));
-        await reloadDrafts();
+        const [projectList, clientList, asana] = await Promise.all([
+          fetchProjects(),
+          fetchClientLookup().catch(() => [] as ClientOption[]),
+          fetchAsanaConnected(),
+        ]);
+        setProjects(projectList.filter((p) => p.isActive !== false));
+        setClients(clientList);
+        setAsanaConnected(asana);
+        await loadEntries();
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
-        setProjects([]);
-        setDrafts([]);
       }
+      setLegacyDrafts(await getLocalTimerDrafts(me.id));
+      setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me.id]);
 
-  const runningDrafts = drafts?.filter((d) => !d.stoppedAt) ?? [];
-  const unsavedDrafts = drafts?.filter((d) => d.stoppedAt) ?? [];
-
   useEffect(() => {
-    if (runningDrafts.length === 0) return;
+    if (!running) return;
     const interval = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(interval);
-  }, [runningDrafts.length]);
+  }, [running]);
 
-  const selectedProject = projects?.find((p) => p.id === projectId);
-  const manualTasks = activeTasks(selectedProject);
-  const canStart = !!projectId && !!taskId && manualTasks.length > 0;
+  const selectedProject = projects.find((p) => p.id === projectId);
+  const manualTasks = (selectedProject?.tasks ?? []).filter((t) => t.source !== 'ASANA');
+  const asanaTasks = (selectedProject?.tasks ?? []).filter((t) => t.source === 'ASANA' && t.isActive !== false);
+  const showAsanaPicker = asanaConnected && !!selectedProject?.asanaSectionGid && asanaTasks.length > 0;
 
-  async function handleStart() {
-    if (!projectId) {
-      setError('Choose a project.');
-      return;
+  async function onProjectChange(id: string) {
+    setProjectId(id);
+    setClientId('');
+    setManualTaskId('');
+    setAsanaTaskId('');
+    setWorkTaskIds([]);
+    setWorkTaskOptions([]);
+    const project = projects.find((p) => p.id === id);
+    if (project?.inTaskManager) {
+      setWorkTaskOptions(await fetchWorkTasks(id).catch(() => []));
     }
-    if (!taskId) {
-      setError('Choose a task.');
-      return;
-    }
-    if (!selectedProject) return;
+  }
 
-    const task = manualTasks.find((t) => t.id === taskId);
-    if (!task) {
-      setError('Choose a task.');
-      return;
-    }
+  function toggleWorkTask(id: string) {
+    setWorkTaskIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
+  }
 
+  function resetForm() {
+    setProjectId('');
+    setClientId('');
+    setManualTaskId('');
+    setAsanaTaskId('');
+    setWorkTaskIds([]);
+    setWorkTaskOptions([]);
+    setNotes('');
+  }
+
+  async function run(action: () => Promise<void>, fallback: string) {
     setBusy(true);
     setError('');
-    setSaveMessage('');
+    setMessage('');
     try {
-      await addLocalRunningTimer(me.id, {
-        projectId,
-        projectName: selectedProject.name,
-        clientName: selectedProject.client.name,
-        taskId: task.id,
-        taskName: task.name,
-        description: description.trim(),
+      await action();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : fallback);
+      await loadEntries().catch(() => undefined);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleStart() {
+    return run(async () => {
+      const projectTaskId = asanaTaskId || manualTaskId;
+      await createTimeEntry({
+        projectId: projectId || null,
+        clientId: projectId ? null : clientId || null,
+        ...(projectTaskId ? { projectTaskId } : {}),
+        taskIds: workTaskIds.length ? workTaskIds : null,
+        taskId: workTaskIds[0] ?? null,
+        description: notes.trim() || undefined,
         startedAt: new Date().toISOString(),
       });
-      await reloadDrafts();
-      setDescription('');
-      setLastStoppedId(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+      resetForm();
+      await loadEntries();
+    }, 'Failed to start timer');
   }
 
-  async function handleStop(draftId: string) {
-    setBusy(true);
-    setError('');
-    setSaveMessage('');
-    try {
-      await stopLocalTimer(me.id, draftId);
-      await reloadDrafts();
-      setLastStoppedId(draftId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+  function handleStop() {
+    if (!running) return;
+    return run(async () => {
+      await stopTimeEntry(running.id);
+      await loadEntries();
+    }, 'Failed to stop timer');
   }
 
-  async function handleStartAgain(draft: LocalTimerDraft) {
-    setProjectId(draft.projectId);
-    setTaskId(draft.taskId);
-    setDescription(draft.description);
-    setLastStoppedId(null);
-    setError('');
-    setSaveMessage('');
-
-    setBusy(true);
-    try {
-      await addLocalRunningTimer(me.id, {
-        projectId: draft.projectId,
-        projectName: draft.projectName,
-        clientName: draft.clientName,
-        taskId: draft.taskId,
-        taskName: draft.taskName,
-        description: draft.description,
-        startedAt: new Date().toISOString(),
-      });
-      await reloadDrafts();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
+  function handleStartFromEntry(entry: TimeEntry) {
+    if (running) {
+      setError('Stop the current timer first.');
+      return;
     }
+    return run(async () => {
+      await restartTimeEntry(entry.id);
+      await loadEntries();
+    }, 'Failed to start timer');
   }
 
-  async function handleDiscard(draftId: string) {
-    setBusy(true);
-    setError('');
-    try {
-      await removeLocalTimerDraft(me.id, draftId);
-      if (lastStoppedId === draftId) setLastStoppedId(null);
-      await reloadDrafts();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleSaveAll() {
-    if (unsavedDrafts.length === 0) return;
-
-    setBusy(true);
-    setError('');
-    setSaveMessage('');
-    const savedIds: string[] = [];
-
-    try {
-      for (const draft of unsavedDrafts) {
-        if (!draft.stoppedAt) continue;
-        await createCompletedTimeEntry({
-          projectId: draft.projectId,
-          projectTaskId: draft.taskId,
-          description: draft.description || undefined,
-          startedAt: draft.startedAt,
-          stoppedAt: draft.stoppedAt,
-        });
-        savedIds.push(draft.id);
+  // Timers kept in the browser by earlier versions of this extension. Saved as finished entries.
+  function handleSaveLegacy() {
+    return run(async () => {
+      const savedIds: string[] = [];
+      try {
+        for (const draft of legacyDrafts) {
+          await createTimeEntry({
+            projectId: draft.projectId || null,
+            clientId: null,
+            ...(draft.taskId ? { projectTaskId: draft.taskId } : {}),
+            taskIds: null,
+            taskId: null,
+            description: draft.description || undefined,
+            startedAt: draft.startedAt,
+            stoppedAt: draft.stoppedAt ?? new Date().toISOString(),
+          });
+          savedIds.push(draft.id);
+        }
+      } finally {
+        await removeLocalTimerDrafts(me.id, savedIds);
+        setLegacyDrafts(await getLocalTimerDrafts(me.id));
       }
-      await removeLocalTimerDrafts(me.id, savedIds);
-      await reloadDrafts();
-      setLastStoppedId(null);
-      setSaveMessage(
-        savedIds.length === 1
-          ? '1 time entry saved to Back Office.'
-          : `${savedIds.length} time entries saved to Back Office.`,
-      );
-    } catch (err) {
-      if (savedIds.length > 0) {
-        await reloadDrafts();
-        setSaveMessage(`${savedIds.length} saved before the error — fix and save the rest.`);
-      }
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+      setMessage(savedIds.length === 1 ? '1 time entry saved.' : `${savedIds.length} time entries saved.`);
+      await loadEntries();
+    }, 'Failed to save');
   }
 
-  if (projects === null || drafts === null) {
+  function handleDiscardLegacy(id: string) {
+    return run(async () => {
+      await removeLocalTimerDraft(me.id, id);
+      setLegacyDrafts(await getLocalTimerDrafts(me.id));
+    }, 'Failed to discard');
+  }
+
+  if (loading) {
     return <div className="panel-body">Loading…</div>;
   }
 
-  // tick keeps running clocks live
-  void tick;
+  const todayMin =
+    entries.reduce((sum, e) => sum + (e.durationMin ?? 0), 0) +
+    (running && new Date(running.startedAt) >= startOfToday() ? elapsedMs(running) / 60000 : 0);
 
   return (
-    <>
-      <div className="panel-body">
-        <div className="field-group">
-          <label className="field-label">Project</label>
-          <select
-            className="field-select"
-            value={projectId}
-            onChange={(e) => {
-              setProjectId(e.target.value);
-              setTaskId('');
-            }}
-          >
-            <option value="">Select a project</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.client.name})
-              </option>
-            ))}
-          </select>
+    <div className="panel-body">
+      {running ? (
+        <div className="timer-card">
+          <p className="timer-project">{entryTitle(running)}</p>
+          {running.projectTask?.name && <p className="timer-client">{running.projectTask.name}</p>}
+          {entryWorkTasks(running).map((t) => (
+            <p key={t.id} className="timer-client">
+              {workTaskLine(t)}
+            </p>
+          ))}
+          <div className="timer-elapsed">{formatDurationMs(elapsedMs(running))}</div>
+          {running.description && <p className="timer-description">{running.description}</p>}
+          <button className="btn-danger" onClick={handleStop} disabled={busy}>
+            {busy ? 'Stopping…' : '■ Stop'}
+          </button>
         </div>
+      ) : (
+        <>
+          {projects.length > 0 && (
+            <div className="field-group">
+              <label className="field-label">Project (optional)</label>
+              <select className="field-select" value={projectId} onChange={(e) => void onProjectChange(e.target.value)}>
+                <option value="">No project</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {projectLabel(p)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
-        {projectId && (
-          <div className="field-group">
-            <label className="field-label">Task</label>
-            {manualTasks.length > 0 ? (
-              <select className="field-select" value={taskId} onChange={(e) => setTaskId(e.target.value)}>
+          {!projectId && clients.length > 0 && (
+            <div className="field-group">
+              <label className="field-label">Client (optional)</label>
+              <select className="field-select" value={clientId} onChange={(e) => setClientId(e.target.value)}>
+                <option value="">No client</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {manualTasks.length > 0 && (
+            <div className="field-group">
+              <label className="field-label">Task</label>
+              <select
+                className="field-select"
+                value={manualTaskId}
+                onChange={(e) => {
+                  setManualTaskId(e.target.value);
+                  if (e.target.value) setAsanaTaskId('');
+                }}
+              >
                 <option value="">Select a task</option>
                 {manualTasks.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.isBillable ? 'Billable' : 'Non-billable'})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {workTaskOptions.length > 0 && (
+            <div className="field-group">
+              <label className="field-label">Work tasks</label>
+              <div className="check-list">
+                {workTaskOptions.map((t) => (
+                  <label key={t.id} className="checkbox-row">
+                    <input type="checkbox" checked={workTaskIds.includes(t.id)} onChange={() => toggleWorkTask(t.id)} />
+                    {t.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {showAsanaPicker && (
+            <div className="field-group">
+              <label className="field-label">Asana task</label>
+              <select
+                className="field-select"
+                value={asanaTaskId}
+                onChange={(e) => {
+                  setAsanaTaskId(e.target.value);
+                  if (e.target.value) setManualTaskId('');
+                }}
+              >
+                <option value="">Select an Asana task</option>
+                {asanaTasks.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.name}
                   </option>
                 ))}
               </select>
-            ) : (
-              <p className="helper-text" style={{ marginTop: 0, textAlign: 'left' }}>
-                This project has no tasks — add one in Back Office first.
-              </p>
-            )}
+            </div>
+          )}
+
+          <div className="field-group">
+            <label className="field-label">Notes</label>
+            <textarea
+              className="field-textarea"
+              rows={2}
+              placeholder="What did you work on?"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
           </div>
-        )}
 
-        <div className="field-group">
-          <label className="field-label">Notes (optional)</label>
-          <textarea
-            className="field-textarea"
-            rows={2}
-            placeholder="What are you working on?"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-        </div>
+          <button className="btn-primary" onClick={handleStart} disabled={busy}>
+            {busy ? 'Starting…' : 'Start timer'}
+          </button>
+        </>
+      )}
 
-        <button className="btn-primary" onClick={handleStart} disabled={busy || !canStart}>
-          {busy ? 'Starting…' : 'Start timer'}
-        </button>
+      {error && <div className="form-error">{error}</div>}
+      {message && <div className="form-success">{message}</div>}
 
-        {runningDrafts.length > 0 && (
-          <section className="timer-section">
-            <p className="timer-section-title">Running ({runningDrafts.length})</p>
-            {runningDrafts.map((draft) => (
-              <div key={draft.id} className="timer-card timer-card-list">
-                <p className="timer-project">{draft.projectName}</p>
-                <p className="timer-client">
-                  {draft.clientName} · {draft.taskName}
+      <section className="timer-section">
+        <p className="timer-section-title">Today ({formatMinutes(todayMin)})</p>
+        {entries.length === 0 ? (
+          <p className="helper-text" style={{ textAlign: 'left', marginTop: 0 }}>
+            No time tracked for this day.
+          </p>
+        ) : (
+          entries.map((entry) => (
+            <div key={entry.id} className="timer-card timer-card-list">
+              <p className="timer-project">{entryTitle(entry)}</p>
+              {entry.projectTask?.name && <p className="timer-client">{entry.projectTask.name}</p>}
+              {entryWorkTasks(entry).map((t) => (
+                <p key={t.id} className="timer-client">
+                  {workTaskLine(t)}
                 </p>
-                <div className="timer-elapsed">{formatDurationMs(draftDurationMs(draft))}</div>
-                {draft.description && <p className="timer-description">{draft.description}</p>}
-                <button className="btn-danger" onClick={() => handleStop(draft.id)} disabled={busy}>
-                  Stop
+              ))}
+              {entry.description && <p className="timer-description">{entry.description}</p>}
+              <div className="entry-row-actions">
+                <span className="entry-duration">{formatMinutes(entry.durationMin ?? 0)}</span>
+                <button
+                  className="btn-secondary btn-inline"
+                  onClick={() => handleStartFromEntry(entry)}
+                  disabled={busy || !!running}
+                  title="Start timer for this entry"
+                >
+                  Start
                 </button>
               </div>
-            ))}
-          </section>
+            </div>
+          ))
         )}
+      </section>
 
-        {unsavedDrafts.length > 0 && (
-          <section className="timer-section">
-            <p className="timer-section-title">Ready to save ({unsavedDrafts.length})</p>
-            <p className="helper-text" style={{ marginTop: 0, textAlign: 'left', marginBottom: 10 }}>
-              Stopped timers stay here until you save them to Back Office.
-            </p>
-            {unsavedDrafts.map((draft) => (
-              <div
-                key={draft.id}
-                className={`timer-card timer-card-list timer-card-stopped${draft.id === lastStoppedId ? ' timer-card-highlight' : ''}`}
-              >
-                <p className="timer-project">{draft.projectName}</p>
-                <p className="timer-client">
-                  {draft.clientName} · {draft.taskName}
-                </p>
-                <div className="timer-elapsed timer-elapsed-stopped">
-                  {formatDurationMs(draftDurationMs(draft))}
-                </div>
-                {draft.stoppedAt && (
-                  <p className="timer-stopped-at">Stopped at {formatStoppedAt(draft.stoppedAt)}</p>
-                )}
-                {draft.description && <p className="timer-description">{draft.description}</p>}
-                <div className="timer-card-actions">
-                  <button className="btn-secondary" onClick={() => handleStartAgain(draft)} disabled={busy}>
-                    Start again
-                  </button>
-                  <button className="link-button" onClick={() => handleDiscard(draft.id)} disabled={busy}>
-                    Discard
-                  </button>
-                </div>
-              </div>
-            ))}
-          </section>
-        )}
-
-        {error && <div className="form-error">{error}</div>}
-        {saveMessage && <div className="form-success">{saveMessage}</div>}
-      </div>
-
-      {unsavedDrafts.length > 0 && (
-        <div className="panel-footer">
-          <button className="btn-primary" onClick={handleSaveAll} disabled={busy}>
-            {busy
-              ? 'Saving…'
-              : unsavedDrafts.length === 1
-                ? 'Save 1 entry to Back Office'
-                : `Save ${unsavedDrafts.length} entries to Back Office`}
+      {legacyDrafts.length > 0 && (
+        <section className="timer-section">
+          <p className="timer-section-title">Not saved yet ({legacyDrafts.length})</p>
+          <p className="helper-text" style={{ marginTop: 0, textAlign: 'left', marginBottom: 10 }}>
+            Timers from an earlier version of this extension, kept only in this browser. Save them to Back
+            Office or discard them. Any still running are stopped now when saved.
+          </p>
+          {legacyDrafts.map((draft) => (
+            <div key={draft.id} className="timer-card timer-card-list timer-card-stopped">
+              <p className="timer-project">
+                {draft.projectName} ({draft.clientName || 'Personal'})
+              </p>
+              {draft.taskName && <p className="timer-client">{draft.taskName}</p>}
+              <div className="timer-elapsed timer-elapsed-stopped">{formatDurationMs(draftDurationMs(draft))}</div>
+              {draft.description && <p className="timer-description">{draft.description}</p>}
+              <button className="link-button" onClick={() => handleDiscardLegacy(draft.id)} disabled={busy}>
+                Discard
+              </button>
+            </div>
+          ))}
+          <button className="btn-primary" onClick={handleSaveLegacy} disabled={busy}>
+            {legacyDrafts.length === 1 ? 'Save 1 entry to Back Office' : `Save ${legacyDrafts.length} entries to Back Office`}
           </button>
-        </div>
+        </section>
       )}
-    </>
+    </div>
   );
 }

@@ -10,22 +10,42 @@ import {
   signInWithPassword,
   signOutCognito,
 } from '../../lib/cognitoAuth';
-import {
-  Expense,
-  Me,
-  ProjectOption,
-  createExpense,
-  fetchMe,
-  fetchProjects,
-  uploadExpenseReceipt,
-} from '../../lib/api';
+import { Me, TenantOption, fetchMe, fetchTenants, setApiTenantSlug } from '../../lib/api';
+import { allows, roleLabel } from '../../lib/access';
+import { getStoredTenantSlug, pickTenantSlug, setStoredTenantSlug } from '../../lib/tenant';
 import TimerTab from './TimerTab';
+import ExpenseTab from './ExpenseTab';
 
 type Screen = 'loading' | 'login' | 'main';
 
+interface Session {
+  me: Me;
+  tenants: TenantOption[];
+  tenantSlug: string;
+}
+
+/**
+ * Sign-in, then the tenant: /users/me and /tenants/mine, pick the tenant the same way the admin app
+ * does, and send it as x-tenant-slug from then on. /users/me is fetched again under the chosen tenant
+ * so role, permissions and modules are the ones for that tenant.
+ */
+async function loadSession(preferredSlug?: string): Promise<Session> {
+  setApiTenantSlug('');
+  const first = await fetchMe();
+  const stored = preferredSlug ?? (await getStoredTenantSlug(first.email));
+  setApiTenantSlug(stored);
+  let me = stored ? await fetchMe() : first;
+  const tenants = await fetchTenants();
+  const tenantSlug = pickTenantSlug(me, tenants, stored);
+  setApiTenantSlug(tenantSlug);
+  if (tenantSlug !== stored) me = await fetchMe();
+  await setStoredTenantSlug(me.email, tenantSlug);
+  return { me, tenants, tenantSlug };
+}
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>('loading');
-  const [me, setMe] = useState<Me | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [authMode, setAuthMode] = useState<'dev' | 'cognito' | null>(null);
   const [authError, setAuthError] = useState('');
 
@@ -47,8 +67,7 @@ export default function App() {
 
   async function loadMe(mode: 'dev' | 'cognito') {
     try {
-      const profile = await fetchMe();
-      setMe(profile);
+      setSession(await loadSession());
       setAuthMode(mode);
       setScreen('main');
     } catch (err) {
@@ -56,15 +75,28 @@ export default function App() {
       // getting stuck showing an empty main panel.
       if (mode === 'cognito') await signOutCognito();
       else await clearDevCreds();
+      setApiTenantSlug('');
       setAuthError(err instanceof Error ? err.message : String(err));
       setScreen('login');
     }
   }
 
+  async function handleSwitchTenant(slug: string) {
+    if (!session || slug === session.tenantSlug) return;
+    setScreen('loading');
+    try {
+      setSession(await loadSession(slug));
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : String(err));
+    }
+    setScreen('main');
+  }
+
   async function handleSignOut() {
     if (authMode === 'cognito') await signOutCognito();
     else await clearDevCreds();
-    setMe(null);
+    setApiTenantSlug('');
+    setSession(null);
     setAuthMode(null);
     setScreen('login');
   }
@@ -73,7 +105,7 @@ export default function App() {
     return <div className="panel-body">Loading…</div>;
   }
 
-  if (screen === 'login' || !me) {
+  if (screen === 'login' || !session) {
     return (
       <LoginScreen
         initialError={authError}
@@ -86,7 +118,16 @@ export default function App() {
     );
   }
 
-  return <MainPanel me={me} authMode={authMode} onSignOut={handleSignOut} />;
+  return (
+    <MainPanel
+      // Remount on tenant switch so no data from the old tenant stays on screen.
+      key={session.tenantSlug}
+      session={session}
+      authMode={authMode}
+      onSwitchTenant={handleSwitchTenant}
+      onSignOut={handleSignOut}
+    />
+  );
 }
 
 type CognitoFormMode = 'login' | 'new-password-required';
@@ -327,15 +368,21 @@ function displayName(me: Me): string {
 }
 
 function MainPanel({
-  me,
+  session,
   authMode,
+  onSwitchTenant,
   onSignOut,
 }: {
-  me: Me;
+  session: Session;
   authMode: 'dev' | 'cognito' | null;
+  onSwitchTenant: (slug: string) => void;
   onSignOut: () => void;
 }) {
-  const [tab, setTab] = useState<'timer' | 'expense'>('timer');
+  const { me, tenants, tenantSlug } = session;
+  const canTime = allows(me, 'time', 'create');
+  const canExpense = allows(me, 'expenses', 'create');
+  const [tab, setTab] = useState<'timer' | 'expense'>(canTime ? 'timer' : 'expense');
+  const tenantName = tenants.find((t) => t.slug === tenantSlug)?.name ?? '';
 
   return (
     <div className="panel">
@@ -343,8 +390,8 @@ function MainPanel({
         <div className="header-user">
           <p className="header-user-name">{displayName(me)}</p>
           <p className="header-user-role">
-            {me.role === 'ADMIN' ? 'Admin' : 'Member'}
-            {authMode === 'dev' ? ' · dev login' : ''}
+            {roleLabel(me)}
+            {authMode === 'dev' ? ', dev login' : ''}
           </p>
         </div>
         <div className="header-actions">
@@ -359,225 +406,47 @@ function MainPanel({
           </button>
         </div>
       </div>
-      <div className="tab-row">
-        <button className={`tab-btn${tab === 'timer' ? ' active' : ''}`} onClick={() => setTab('timer')}>
-          Timer
-        </button>
-        <button className={`tab-btn${tab === 'expense' ? ' active' : ''}`} onClick={() => setTab('expense')}>
-          Expense
-        </button>
-      </div>
-      {tab === 'timer' ? <TimerTab me={me} /> : <ExpenseTab me={me} />}
-    </div>
-  );
-}
-
-const EXPENSE_CATEGORIES = ['Software', 'Travel', 'Meals', 'Supplies', 'Contractor', 'Advertising', 'Other'];
-
-function todayDateInputValue(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function ExpenseTab({ me: _me }: { me: Me }) {
-  const [projects, setProjects] = useState<ProjectOption[] | null>(null);
-  const [description, setDescription] = useState('');
-  const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState('');
-  const [incurredAt, setIncurredAt] = useState(todayDateInputValue());
-  const [projectId, setProjectId] = useState('');
-  const [isReimbursable, setIsReimbursable] = useState(false);
-  const [isBillable, setIsBillable] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState('');
-  const [notes, setNotes] = useState('');
-  const [receiptFile, setReceiptFile] = useState<File | null>(null);
-  const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
-  const [error, setError] = useState('');
-  const [savedExpense, setSavedExpense] = useState<Expense | null>(null);
-
-  useEffect(() => {
-    fetchProjects()
-      .then((list) => setProjects(list.filter((p) => p.isActive)))
-      .catch(() => setProjects([]));
-  }, []);
-
-  function resetForm() {
-    setDescription('');
-    setAmount('');
-    setCategory('');
-    setIncurredAt(todayDateInputValue());
-    setProjectId('');
-    setIsReimbursable(false);
-    setIsBillable(false);
-    setPaymentMethod('');
-    setNotes('');
-    setReceiptFile(null);
-    setStatus('idle');
-    setSavedExpense(null);
-  }
-
-  async function handleSave() {
-    const amountNum = Number(amount);
-    if (!description.trim()) {
-      setError('Description is required.');
-      setStatus('error');
-      return;
-    }
-    if (!amountNum || amountNum <= 0) {
-      setError('Enter an amount greater than 0.');
-      setStatus('error');
-      return;
-    }
-
-    setStatus('saving');
-    setError('');
-    try {
-      const expense = await createExpense({
-        description: description.trim(),
-        amount: amountNum,
-        category: category.trim() || undefined,
-        incurredAt: new Date(incurredAt).toISOString(),
-        projectId: projectId || undefined,
-        isReimbursable,
-        isBillable,
-        paymentMethod: paymentMethod.trim() || undefined,
-        notes: notes.trim() || undefined,
-      });
-      if (receiptFile) {
-        await uploadExpenseReceipt(expense.id, receiptFile);
-      }
-      setSavedExpense(expense);
-      setStatus('success');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setStatus('error');
-    }
-  }
-
-  if (status === 'success') {
-    return (
-      <div className="success-wrap">
-        <div className="success-check">✓</div>
-        <p className="success-title">Expense logged</p>
-        <p className="success-sub">
-          {savedExpense ? `$${savedExpense.amount.toFixed(2)} — ${savedExpense.description}` : ''}
-        </p>
-        <button className="btn-secondary" style={{ marginTop: 0 }} onClick={resetForm}>
-          Log another
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <div className="panel-body">
-        <div className="field-group">
-          <label className="field-label">Description</label>
-          <input
-            className="field-input"
-            placeholder="What was this for?"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-        </div>
-
-        <div className="field-row">
-          <div className="field-group">
-            <label className="field-label">Amount</label>
-            <input
-              className="field-input"
-              type="number"
-              inputMode="decimal"
-              step="0.01"
-              min="0"
-              placeholder="0.00"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
-          </div>
-          <div className="field-group">
-            <label className="field-label">Date</label>
-            <input
-              className="field-input"
-              type="date"
-              value={incurredAt}
-              onChange={(e) => setIncurredAt(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="field-group">
-          <label className="field-label">Category (optional)</label>
-          <input
-            className="field-input"
-            list="expense-category-options"
-            placeholder="e.g. Software, Travel, Supplies…"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-          />
-          <datalist id="expense-category-options">
-            {EXPENSE_CATEGORIES.map((c) => (
-              <option key={c} value={c} />
-            ))}
-          </datalist>
-        </div>
-
-        <div className="field-group">
-          <label className="field-label">Project (optional)</label>
-          <select className="field-select" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            <option value="">No project</option>
-            {(projects ?? []).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.client.name})
+      {tenants.length > 1 && (
+        <div className="tenant-row">
+          <label className="field-label" htmlFor="tenant-select">
+            Organization
+          </label>
+          <select
+            id="tenant-select"
+            className="field-select"
+            value={tenantSlug}
+            onChange={(e) => onSwitchTenant(e.target.value)}
+          >
+            {tenants.map((t) => (
+              <option key={t.slug} value={t.slug}>
+                {t.name}
               </option>
             ))}
           </select>
         </div>
-
-        <div className="field-group" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <label className="checkbox-row">
-            <input type="checkbox" checked={isReimbursable} onChange={(e) => setIsReimbursable(e.target.checked)} />
-            Reimbursable
-          </label>
-          <label className="checkbox-row">
-            <input type="checkbox" checked={isBillable} onChange={(e) => setIsBillable(e.target.checked)} />
-            Billable to client
-          </label>
+      )}
+      {!canTime && !canExpense ? (
+        <div className="panel-body">
+          <p className="helper-text" style={{ textAlign: 'left' }}>
+            Your account{tenantName ? ` in ${tenantName}` : ''} doesn't include Time or Expenses. Ask an
+            administrator if you need them.
+          </p>
         </div>
-
-        <div className="field-group">
-          <label className="field-label">Payment method (optional)</label>
-          <input
-            className="field-input"
-            placeholder="e.g. Personal card, Company Amex…"
-            value={paymentMethod}
-            onChange={(e) => setPaymentMethod(e.target.value)}
-          />
-        </div>
-
-        <div className="field-group">
-          <label className="field-label">Notes (optional)</label>
-          <textarea className="field-textarea" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </div>
-
-        <div className="field-group">
-          <label className="field-label">Receipt (optional)</label>
-          <input
-            className="field-input"
-            type="file"
-            accept="image/*,.pdf"
-            onChange={(e) => setReceiptFile(e.target.files?.[0] ?? null)}
-          />
-        </div>
-      </div>
-      <div className="panel-footer">
-        <button className="btn-primary" onClick={handleSave} disabled={status === 'saving'}>
-          {status === 'saving' ? 'Saving…' : 'Log expense'}
-        </button>
-        {status === 'error' && <div className="form-error">{error}</div>}
-      </div>
-    </>
+      ) : (
+        <>
+          {canTime && canExpense && (
+            <div className="tab-row">
+              <button className={`tab-btn${tab === 'timer' ? ' active' : ''}`} onClick={() => setTab('timer')}>
+                Timer
+              </button>
+              <button className={`tab-btn${tab === 'expense' ? ' active' : ''}`} onClick={() => setTab('expense')}>
+                Expense
+              </button>
+            </div>
+          )}
+          {tab === 'timer' && canTime ? <TimerTab me={me} /> : <ExpenseTab me={me} />}
+        </>
+      )}
+    </div>
   );
 }

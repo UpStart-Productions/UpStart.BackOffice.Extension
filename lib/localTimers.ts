@@ -1,4 +1,8 @@
-/** Local-only timer drafts — not sent to the API until the user saves. */
+/**
+ * Local-only timer drafts from earlier versions of the extension, which timed entries in the browser
+ * and saved them later. The timer now runs on the server like the admin app's; this is only kept so
+ * drafts left in storage can still be saved or discarded (see TimerTab).
+ */
 
 export interface LocalTimerDraft {
   id: string;
@@ -24,31 +28,6 @@ export async function getLocalTimerDrafts(userId: string): Promise<LocalTimerDra
 
 async function setLocalTimerDrafts(userId: string, drafts: LocalTimerDraft[]): Promise<void> {
   await chrome.storage.local.set({ [storageKey(userId)]: drafts });
-}
-
-export function newDraftId(): string {
-  return crypto.randomUUID();
-}
-
-export async function addLocalRunningTimer(
-  userId: string,
-  draft: Omit<LocalTimerDraft, 'id' | 'stoppedAt'>,
-): Promise<LocalTimerDraft> {
-  const entry: LocalTimerDraft = { ...draft, id: newDraftId(), stoppedAt: null };
-  const drafts = await getLocalTimerDrafts(userId);
-  drafts.unshift(entry);
-  await setLocalTimerDrafts(userId, drafts);
-  return entry;
-}
-
-export async function stopLocalTimer(userId: string, draftId: string): Promise<LocalTimerDraft | null> {
-  const drafts = await getLocalTimerDrafts(userId);
-  const idx = drafts.findIndex((d) => d.id === draftId);
-  if (idx < 0) return null;
-  const updated: LocalTimerDraft = { ...drafts[idx], stoppedAt: new Date().toISOString() };
-  drafts[idx] = updated;
-  await setLocalTimerDrafts(userId, drafts);
-  return updated;
 }
 
 export async function removeLocalTimerDraft(userId: string, draftId: string): Promise<void> {

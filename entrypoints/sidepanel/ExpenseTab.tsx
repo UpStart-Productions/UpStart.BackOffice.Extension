@@ -14,6 +14,7 @@ import {
   isMileageCategory,
   uploadExpenseReceipt,
 } from '../../lib/api';
+import SingleFileDropzone from './ui/SingleFileDropzone';
 
 // Mirrors the admin app's "New expense" dialog (admin/src/app/pages/expenses/expense-modal.component.*):
 // the tenant's own category and payment-method lists, Client then Project (projects of that client),
@@ -343,11 +344,22 @@ export default function ExpenseTab({ me: _me }: { me: Me }) {
 
         <div className="field-group">
           <label className="field-label">Receipt</label>
-          <input
-            className="field-input"
-            type="file"
+          <SingleFileDropzone
+            file={receiptFile}
             accept="image/*,.pdf,application/pdf"
-            onChange={(e) => setReceiptFile(e.target.files?.[0] ?? null)}
+            maxBytes={10 * 1024 * 1024}
+            emptyTitle="Receipt"
+            emptyHint="Drop image or PDF, or click to browse"
+            selectedTitle="Receipt"
+            replaceHint="Drop or click to replace"
+            onFileChange={(f) => {
+              setReceiptFile(f);
+              if (f) setError('');
+            }}
+            onInvalidFile={(msg) => {
+              setError(msg);
+              setStatus('error');
+            }}
           />
         </div>
       </div>

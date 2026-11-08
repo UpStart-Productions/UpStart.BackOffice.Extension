@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { LogOut } from 'lucide-react';
 import { DEV_LOGIN_AVAILABLE } from '../../lib/config';
 import { DEFAULT_EMAIL, DevCreds, clearDevCreds, getDevCreds, setDevCreds } from '../../lib/devAuth';
@@ -15,6 +15,11 @@ import { allows, roleLabel } from '../../lib/access';
 import { getStoredTenantSlug, pickTenantSlug, setStoredTenantSlug } from '../../lib/tenant';
 import TimerTab from './TimerTab';
 import ExpenseTab from './ExpenseTab';
+import TaskTab from './TaskTab';
+import PersonTab from './PersonTab';
+import OrganizationTab from './OrganizationTab';
+
+type PanelTab = 'timer' | 'expense' | 'task' | 'person' | 'organization';
 
 type Screen = 'loading' | 'login' | 'main';
 
@@ -381,8 +386,25 @@ function MainPanel({
   const { me, tenants, tenantSlug } = session;
   const canTime = allows(me, 'time', 'create');
   const canExpense = allows(me, 'expenses', 'create');
-  const [tab, setTab] = useState<'timer' | 'expense'>(canTime ? 'timer' : 'expense');
+  const canTask = allows(me, 'tasks', 'create');
+  const canPerson = allows(me, 'contacts', 'create');
+  const canOrganization = allows(me, 'clients', 'create');
+  const tabs = useMemo(() => {
+    const items: { id: PanelTab; label: string }[] = [];
+    if (canTime) items.push({ id: 'timer', label: 'Timer' });
+    if (canExpense) items.push({ id: 'expense', label: 'Expense' });
+    if (canTask) items.push({ id: 'task', label: 'Task' });
+    if (canPerson) items.push({ id: 'person', label: 'Person' });
+    if (canOrganization) items.push({ id: 'organization', label: 'Org' });
+    return items;
+  }, [canTime, canExpense, canTask, canPerson, canOrganization]);
+  const [tab, setTab] = useState<PanelTab>('timer');
   const tenantName = tenants.find((t) => t.slug === tenantSlug)?.name ?? '';
+
+  useEffect(() => {
+    if (tabs.length === 0) return;
+    if (!tabs.some((t) => t.id === tab)) setTab(tabs[0]!.id);
+  }, [tabs, tab]);
 
   return (
     <div className="panel">
@@ -409,7 +431,7 @@ function MainPanel({
       {tenants.length > 1 && (
         <div className="tenant-row">
           <label className="field-label" htmlFor="tenant-select">
-            Organization
+            Tenant
           </label>
           <select
             id="tenant-select"
@@ -425,26 +447,36 @@ function MainPanel({
           </select>
         </div>
       )}
-      {!canTime && !canExpense ? (
+      {tabs.length === 0 ? (
         <div className="panel-body">
           <p className="helper-text" style={{ textAlign: 'left' }}>
-            Your account{tenantName ? ` in ${tenantName}` : ''} doesn't include Time or Expenses. Ask an
-            administrator if you need them.
+            Your account{tenantName ? ` in ${tenantName}` : ''} doesn't include any quick-capture areas this
+            extension supports. Ask an administrator if you need access.
           </p>
         </div>
       ) : (
         <>
-          {canTime && canExpense && (
+          {tabs.length > 1 && (
             <div className="tab-row">
-              <button className={`tab-btn${tab === 'timer' ? ' active' : ''}`} onClick={() => setTab('timer')}>
-                Timer
-              </button>
-              <button className={`tab-btn${tab === 'expense' ? ' active' : ''}`} onClick={() => setTab('expense')}>
-                Expense
-              </button>
+              {tabs.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`tab-btn${tab === t.id ? ' active' : ''}`}
+                  onClick={() => setTab(t.id)}
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
           )}
-          {tab === 'timer' && canTime ? <TimerTab me={me} /> : <ExpenseTab me={me} />}
+          <div className="panel-main">
+            {tab === 'timer' && canTime && <TimerTab me={me} />}
+            {tab === 'expense' && canExpense && <ExpenseTab me={me} />}
+            {tab === 'task' && canTask && <TaskTab me={me} />}
+            {tab === 'person' && canPerson && <PersonTab me={me} />}
+            {tab === 'organization' && canOrganization && <OrganizationTab me={me} />}
+          </div>
         </>
       )}
     </div>

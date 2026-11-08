@@ -73,7 +73,11 @@ This produces `.output/chrome-mv3/` pointed at **production**
 4. Select `.output/chrome-mv3`
 
 For live-reload while making changes against your **local** API, use
-`npm run dev` instead (requires the local Back Office stack running).
+`npm run dev` instead (requires the local Back Office stack running). Keep
+Chrome's unpacked extension pointed at `.output/chrome-mv3` while the dev
+server runs; WXT rebuilds on save (close and reopen the side panel to pick up
+UI changes). `package.json` pins WXT's Vite to 5.4.x because Vite 6.4+ breaks
+`wxt` dev pre-render with a `Missing field moduleType` error.
 
 To build explicitly for localhost instead of prod:
 

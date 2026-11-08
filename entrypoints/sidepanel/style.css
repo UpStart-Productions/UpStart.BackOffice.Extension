@@ -31,7 +31,15 @@ body {
 .panel {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
+  overflow: hidden;
+}
+
+.panel-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -307,19 +315,25 @@ body {
   gap: 2px;
   padding: 8px 15px 0;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow: hidden;
 }
 
 .tab-btn {
   flex: 1;
+  min-width: 0;
   background: none;
   border: none;
-  padding: 8px 4px 10px;
-  font-size: 12px;
+  padding: 8px 6px 10px;
+  font-size: 11.5px;
   font-weight: 600;
   color: var(--text-muted);
   cursor: pointer;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tab-btn.active {
@@ -511,4 +525,107 @@ body {
 .btn-secondary:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+/* Mirrors admin app-avatar-dropzone / app-single-file-dropzone (inline + fill). */
+.avatar-dropzone,
+.file-dropzone {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 3.25rem;
+  padding: 0.45rem 0.65rem;
+  border: 1.5px dashed color-mix(in srgb, var(--ubo-purple) 45%, var(--border));
+  border-radius: 8px;
+  background: var(--ubo-purple-bg);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  max-width: 16rem;
+}
+
+.avatar-dropzone--fill,
+.file-dropzone--fill {
+  max-width: none;
+  width: 100%;
+}
+
+.avatar-dropzone {
+  border-color: var(--border);
+  background: #f9fafb;
+}
+
+.avatar-dropzone--active,
+.file-dropzone--active {
+  border-color: var(--ubo-purple);
+  background: color-mix(in srgb, var(--ubo-purple) 10%, var(--ubo-purple-bg));
+}
+
+.avatar-dropzone-thumb {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.avatar-dropzone-copy,
+.file-dropzone-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.avatar-dropzone-copy strong,
+.file-dropzone-copy strong {
+  display: block;
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.avatar-dropzone-icon,
+.file-dropzone-icon {
+  flex-shrink: 0;
+  color: var(--ubo-purple);
+}
+
+.avatar-dropzone--active .avatar-dropzone-icon {
+  color: var(--ubo-purple-dark);
+}
+
+.avatar-dropzone-remove,
+.file-dropzone-remove {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 4px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--danger);
+  cursor: pointer;
+}
+
+.file-dropzone-thumb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: #fff;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.file-dropzone-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }

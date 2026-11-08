@@ -6,6 +6,7 @@ import {
   confirmSignInWithNewPassword,
   getAuthErrorMessage,
   hasCognitoSession,
+  signInWithGoogle,
   signInWithPassword,
   signOutCognito,
 } from '../../lib/cognitoAuth';
@@ -137,6 +138,19 @@ function LoginScreen({
     }
   }
 
+  async function handleGoogleSignIn() {
+    setCognitoError('');
+    setCognitoBusy(true);
+    try {
+      await signInWithGoogle();
+      onCognitoSignedIn();
+    } catch (err) {
+      setCognitoError(getAuthErrorMessage(err));
+    } finally {
+      setCognitoBusy(false);
+    }
+  }
+
   async function handleNewPassword() {
     setCognitoError('');
     const p = newPassword.trim();
@@ -166,7 +180,7 @@ function LoginScreen({
       <div className="login-wrap">
         <img className="login-mark" src={chrome.runtime.getURL('icon/128.png')} alt="UpStart Back Office" />
         <p className="login-title">Sign in to UpStart Back Office</p>
-        <p className="login-sub">Use the same email and password as the admin dashboard.</p>
+        <p className="login-sub">Use the same email and password as the admin dashboard, or your Google account.</p>
         <div className="login-form">
           {cognitoMode === 'login' ? (
             <>
@@ -198,6 +212,10 @@ function LoginScreen({
                 disabled={cognitoBusy || !email.trim() || !password}
               >
                 {cognitoBusy ? 'Signing in…' : 'Sign in'}
+              </button>
+              <p className="login-sub" style={{ margin: '12px 0' }}>or</p>
+              <button className="btn-secondary" onClick={handleGoogleSignIn} disabled={cognitoBusy}>
+                Sign in with Google
               </button>
             </>
           ) : (

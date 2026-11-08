@@ -1,0 +1,7 @@
+# Commit messages (Source Control “Generate commit message”)
+
+Keep generated Git commit messages short:
+- One subject line, ideally under 72 characters
+- Focus on why, not a file-by-file restatement of the diff
+- No multi-paragraph essays; add at most 1–2 short body lines only when needed
+- Prefer the style: “Rename GrovSeeds to GrovPods in admin UI and help guide.”
